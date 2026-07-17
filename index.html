@@ -301,7 +301,7 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
   <section class="view" id="view-cards">
     <div class="card">
       <div class="cardhead"><h2>Credit cards</h2><span class="right" id="cardTotalNote"></span></div>
-      <div class="cardsub">Track what you owe and what's due. When "plan statement payment" is on, a payment for the statement balance is added to your cash timeline on the due day each month — no need to enter card payments by hand.</div>
+      <div class="cardsub">Track what you owe and what's due. "Plan payment" puts the statement balance into your cash timeline: <strong>One-time</strong> schedules it on the next due date only (update the statement each cycle and it rolls forward), <strong>Monthly</strong> repeats the same amount every due day — good for cards you pay a steady amount on.</div>
       <div style="overflow-x:auto">
         <table id="cardsTable"><thead><tr>
           <th>Card</th><th class="num">Current balance</th><th class="num">Statement balance</th><th class="ctr">Payment due</th><th class="ctr">Plan payment</th><th></th>
@@ -496,8 +496,8 @@ function demoState(){
     { id: uid(), name: 'Student loan', amount: 260, schedule: { type:'monthly', day: 28 } },
   ];
   s.cards = [
-    { id: uid(), name: 'Visa', currentBalance: 1240.55, statementBalance: 780.22, dueDay: 22, planPayment: true },
-    { id: uid(), name: 'Amex', currentBalance: 610.10, statementBalance: 430.00, dueDay: 5, planPayment: true },
+    { id: uid(), name: 'Visa', currentBalance: 1240.55, statementBalance: 780.22, dueDay: 22, planPayment: true, payMode: 'once' },
+    { id: uid(), name: 'Amex', currentBalance: 610.10, statementBalance: 430.00, dueDay: 5, planPayment: true, payMode: 'once' },
   ];
   const visa = s.cards[0].id, amex = s.cards[1].id;
   s.subs = [
@@ -605,11 +605,21 @@ function computeModel(){
       events.push({ date: d, name: b.name, amount: -b.amount, kind: 'bill' });
   }
 
-  // planned card payments: statement balance on due day, monthly
+  // planned card payments. 'once': the statement balance on the NEXT due
+  // date only (future statements aren't known yet — update it each cycle and
+  // it rolls forward). 'monthly': repeat the amount on every due day.
   for (const c of state.cards){
-    if (!c.planPayment || !(c.statementBalance > 0)) continue;
-    for (const d of expandSchedule({ type:'monthly', day: c.dueDay }, winStart, winEnd))
-      events.push({ date: d, name: c.name + ' payment', amount: -c.statementBalance, kind: 'cardpay' });
+    const mode = c.payMode || (c.planPayment ? 'once' : 'off');
+    if (mode === 'off' || !(c.statementBalance > 0)) continue;
+    if (mode === 'monthly'){
+      for (const d of expandSchedule({ type:'monthly', day: c.dueDay }, winStart, winEnd))
+        events.push({ date: d, name: c.name + ' payment', amount: -c.statementBalance, kind: 'cardpay' });
+    } else {
+      let due = clampDayDate(t.getFullYear(), t.getMonth(), c.dueDay);
+      if (due < t) due = clampDayDate(t.getFullYear(), t.getMonth() + 1, c.dueDay);
+      if (due >= winStart && due <= winEnd)
+        events.push({ date: due, name: c.name + ' payment', amount: -c.statementBalance, kind: 'cardpay' });
+    }
   }
 
   // subscriptions & annuals — cash-paid ones hit the timeline; card-billed ones are informational
@@ -990,15 +1000,16 @@ function sourceLabel(src){
 function renderCards(m){
   const ct = $('#cardsTable tbody'); clear(ct);
   for (const c of state.cards){
-    const chk = el('input', {type:'checkbox'});
-    chk.checked = !!c.planPayment;
-    chk.addEventListener('change', () => { c.planPayment = chk.checked; markDirty(); renderAll(); });
+    const mode = c.payMode || (c.planPayment ? 'once' : 'off');
+    const sel = mkSelect([['once','One-time'], ['monthly','Monthly'], ['off','Off']], mode);
+    sel.style.fontSize = '12.5px'; sel.style.padding = '4px 8px';
+    sel.addEventListener('change', () => { c.payMode = sel.value; c.planPayment = sel.value !== 'off'; markDirty(); renderAll(); });
     ct.appendChild(el('tr', null,
       el('td', null, c.name),
       el('td', {class:'num'}, money(c.currentBalance, true)),
       el('td', {class:'num'}, money(c.statementBalance, true)),
       el('td', {class:'ctr'}, 'the ' + ordinal(c.dueDay)),
-      el('td', {class:'ctr'}, chk),
+      el('td', {class:'ctr'}, sel),
       el('td', {class:'rowactions'}, el('button', {onclick: () => openModal('card', c.id)}, 'Edit'))));
   }
   if (!state.cards.length) ct.appendChild(el('tr', null, el('td', {colspan:'6', class:'empty'}, 'No cards yet.')));
@@ -1105,12 +1116,15 @@ function openModal(kind, id){
     f.current = mkInput({type:'number', step:'0.01', value: item ? String(item.currentBalance) : ''});
     f.statement = mkInput({type:'number', step:'0.01', value: item ? String(item.statementBalance) : ''});
     f.dueDay = mkSelect(dayOptions(), item ? item.dueDay : 1);
-    f.plan = el('input', {type:'checkbox'}); f.plan.checked = item ? !!item.planPayment : true;
+    f.payMode = mkSelect([
+      ['once', 'One-time — next due date only'],
+      ['monthly', 'Monthly — repeats every due day'],
+      ['off', 'Off — don’t plan a payment']],
+      item ? (item.payMode || (item.planPayment ? 'once' : 'off')) : 'once');
     body.appendChild(formRow('Current balance ($)', f.current));
     body.appendChild(formRow('Statement balance ($) — what’s due this cycle', f.statement));
     body.appendChild(formRow('Payment due day', f.dueDay));
-    const lbl = el('label', {style:'display:flex; align-items:center; gap:8px; font-size:13px; color:var(--ink-2)'}, f.plan, 'Plan the statement payment in my cash timeline');
-    body.appendChild(el('div', {class:'formrow'}, lbl));
+    body.appendChild(formRow('Plan the payment in my cash timeline', f.payMode));
   } else {
     f.amount = mkInput({type:'number', step:'0.01', min:'0', value: item ? String(item.amount) : ''});
     body.appendChild(formRow('Amount ($)', f.amount));
@@ -1156,7 +1170,8 @@ function saveModal(){
     item.currentBalance = num(f.current);
     item.statementBalance = num(f.statement);
     item.dueDay = f.dueDay.value === 'last' ? 'last' : Number(f.dueDay.value);
-    item.planPayment = f.plan.checked;
+    item.payMode = f.payMode.value;
+    item.planPayment = item.payMode !== 'off';
   } else {
     item.amount = Math.abs(num(f.amount));
     if (kind === 'income' || kind === 'bill'){
