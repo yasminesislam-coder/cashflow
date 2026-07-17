@@ -580,9 +580,12 @@ function computeModel(){
   const events = []; // {date, name, amount(+in/-out), kind, sourceLabel}
   const cardName = id => { const c = state.cards.find(c => c.id === id); return c ? c.name : null; };
 
-  for (const inc of state.incomes)
-    for (const d of expandSchedule(inc.schedule, winStart, winEnd))
+  for (const inc of state.incomes){
+    const stop = inc.endDate ? s2d(inc.endDate) : null; // optional last day this income arrives
+    const effEnd = (stop && stop < winEnd) ? stop : winEnd;
+    for (const d of expandSchedule(inc.schedule, winStart, effEnd))
       events.push({ date: d, name: inc.name, amount: +inc.amount, kind: 'income' });
+  }
 
   for (const b of state.bills)
     for (const d of expandSchedule(b.schedule, winStart, winEnd))
@@ -941,7 +944,8 @@ function renderPlan(m){
   for (const inc of state.incomes)
     it.appendChild(itemRow(inc, 'income', [
       el('td', null, inc.name),
-      el('td', null, el('span', {class:'evlist'}, scheduleLabel(inc.schedule))),
+      el('td', null, el('span', {class:'evlist'}, scheduleLabel(inc.schedule) +
+        (inc.endDate ? ' · until ' + fmtDate(s2d(inc.endDate), true) : ''))),
       el('td', {class:'num amount-pos'}, money(inc.amount, true))]));
   if (!state.incomes.length) it.appendChild(el('tr', null, el('td', {colspan:'4', class:'empty'}, 'No income yet.')));
   $('#incomeTotalNote').textContent = money(m.winIn) + ' this window';
@@ -1095,6 +1099,10 @@ function openModal(kind, id){
       f.sched = sf;
       body.appendChild(formRow('How often', sf.typeSel));
       body.appendChild(sf.holder);
+      if (kind === 'income'){
+        f.endDate = mkInput({type:'date', value: (item && item.endDate) ? item.endDate : ''});
+        body.appendChild(formRow('End date (optional) — last day this income arrives', f.endDate));
+      }
     } else if (kind === 'sub'){
       f.day = mkSelect(dayOptions(), item ? item.day : 1);
       f.source = mkSelect(sourceOptions(), item ? item.source : 'cash');
@@ -1131,7 +1139,10 @@ function saveModal(){
     item.planPayment = f.plan.checked;
   } else {
     item.amount = Math.abs(num(f.amount));
-    if (kind === 'income' || kind === 'bill') item.schedule = f.sched.read();
+    if (kind === 'income' || kind === 'bill'){
+      item.schedule = f.sched.read();
+      if (kind === 'income') item.endDate = f.endDate.value || null;
+    }
     else if (kind === 'sub'){ item.day = f.day.value === 'last' ? 'last' : Number(f.day.value); item.source = f.source.value; }
     else if (kind === 'annual'){ item.month = Number(f.month.value); item.day = Math.min(31, Math.max(1, Number(f.aday.value) || 1)); item.source = f.source.value; }
   }
