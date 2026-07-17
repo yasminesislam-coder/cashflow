@@ -590,9 +590,15 @@ function computeModel(){
       events.push({ date: d, name: inc.name, amount: +inc.amount, kind: 'income' });
   }
 
-  for (const b of state.bills)
-    for (const d of expandSchedule(b.schedule, winStart, winEnd))
+  for (const b of state.bills){
+    const from = b.startDate ? s2d(b.startDate) : null;
+    const stop = b.endDate ? s2d(b.endDate) : null;
+    const effStart = (from && from > winStart) ? from : winStart;
+    const effEnd = (stop && stop < winEnd) ? stop : winEnd;
+    if (effStart > effEnd) continue;
+    for (const d of expandSchedule(b.schedule, effStart, effEnd))
       events.push({ date: d, name: b.name, amount: -b.amount, kind: 'bill' });
+  }
 
   // planned card payments: statement balance on due day, monthly
   for (const c of state.cards){
@@ -961,7 +967,9 @@ function renderPlan(m){
   for (const b of state.bills)
     bt.appendChild(itemRow(b, 'bill', [
       el('td', null, b.name),
-      el('td', null, el('span', {class:'evlist'}, scheduleLabel(b.schedule))),
+      el('td', null, el('span', {class:'evlist'}, scheduleLabel(b.schedule) +
+        (b.startDate ? ' · from ' + fmtDate(s2d(b.startDate), true) : '') +
+        (b.endDate ? ' · until ' + fmtDate(s2d(b.endDate), true) : ''))),
       el('td', {class:'num'}, money(b.amount, true))]));
   if (!state.bills.length) bt.appendChild(el('tr', null, el('td', {colspan:'4', class:'empty'}, 'No bills yet.')));
   $('#billTotalNote').textContent = money(m.winOut) + ' this window (incl. card payments)';
@@ -1106,12 +1114,10 @@ function openModal(kind, id){
       f.sched = sf;
       body.appendChild(formRow('How often', sf.typeSel));
       body.appendChild(sf.holder);
-      if (kind === 'income'){
-        f.startDate = mkInput({type:'date', value: (item && item.startDate) ? item.startDate : ''});
-        f.endDate = mkInput({type:'date', value: (item && item.endDate) ? item.endDate : ''});
-        body.appendChild(formRow('Start date (optional) — first day this income arrives', f.startDate));
-        body.appendChild(formRow('End date (optional) — last day this income arrives', f.endDate));
-      }
+      f.startDate = mkInput({type:'date', value: (item && item.startDate) ? item.startDate : ''});
+      f.endDate = mkInput({type:'date', value: (item && item.endDate) ? item.endDate : ''});
+      body.appendChild(formRow('Start date (optional)', f.startDate));
+      body.appendChild(formRow('End date (optional)', f.endDate));
     } else if (kind === 'sub'){
       f.day = mkSelect(dayOptions(), item ? item.day : 1);
       f.source = mkSelect(sourceOptions(), item ? item.source : 'cash');
@@ -1150,12 +1156,10 @@ function saveModal(){
     item.amount = Math.abs(num(f.amount));
     if (kind === 'income' || kind === 'bill'){
       item.schedule = f.sched.read();
-      if (kind === 'income'){
-        item.startDate = f.startDate.value || null;
-        item.endDate = f.endDate.value || null;
-        if (item.startDate && item.endDate && item.startDate > item.endDate)
-          [item.startDate, item.endDate] = [item.endDate, item.startDate]; // forgive swapped entry
-      }
+      item.startDate = f.startDate.value || null;
+      item.endDate = f.endDate.value || null;
+      if (item.startDate && item.endDate && item.startDate > item.endDate)
+        [item.startDate, item.endDate] = [item.endDate, item.startDate]; // forgive swapped entry
     }
     else if (kind === 'sub'){ item.day = f.day.value === 'last' ? 'last' : Number(f.day.value); item.source = f.source.value; }
     else if (kind === 'annual'){ item.month = Number(f.month.value); item.day = Math.min(31, Math.max(1, Number(f.aday.value) || 1)); item.source = f.source.value; }
