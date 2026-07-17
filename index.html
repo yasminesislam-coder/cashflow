@@ -432,6 +432,10 @@ function s2d(s){ const [y,m,dd] = s.split('-').map(Number); return new Date(y, m
 function today0(){ const t = new Date(); return new Date(t.getFullYear(), t.getMonth(), t.getDate()); }
 function addDays(d, n){ return new Date(d.getFullYear(), d.getMonth(), d.getDate()+n); }
 function eomonth(d, offset){ return new Date(d.getFullYear(), d.getMonth()+offset+1, 0); }
+function addMonths(d, n){ // same day n months out, clamped to that month's length
+  const y = d.getFullYear(), m = d.getMonth() + n;
+  return new Date(y, m, Math.min(d.getDate(), daysInMonth(y, m)));
+}
 function daysInMonth(y, m){ return new Date(y, m+1, 0).getDate(); }
 function clampDayDate(y, m, day){ // day: 1..31 or 'last'
   const dim = daysInMonth(y, m);
@@ -569,13 +573,14 @@ function scheduleLabel(schedule){
 }
 
 /* ---------- model computation ----------
-   Window runs from today through the selected horizon (today → EOMONTH(+h)). */
+   Window runs from today. "Through (this|next) month-end" ends on a month
+   boundary; "Next N months" ends exactly N months from today. */
 function computeModel(){
   const t = today0();
   const h = Number(state.settings.horizon);
   const winStart = t;
-  const winEnd = eomonth(t, h);
-  const months = h + 1; // month boundaries covered by the window
+  const winEnd = h <= 1 ? eomonth(t, h) : addMonths(t, h);
+  const months = h <= 1 ? h + 1 : h; // savings multiplier: months the window spans
 
   const events = []; // {date, name, amount(+in/-out), kind, sourceLabel}
   const cardName = id => { const c = state.cards.find(c => c.id === id); return c ? c.name : null; };
