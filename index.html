@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
-<title>Cashflow — know your balance before it happens</title>
+<title>Cashflow — know your balance</title>
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="default">
@@ -199,7 +199,7 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
   <div class="topbar">
     <div class="brand">
       <h1>Cashflow</h1>
-      <span class="tag">know your balance before it happens</span>
+      <span class="tag">know your balance</span>
     </div>
     <div class="spacer"></div>
     <span class="dirty-chip" id="dirtyChip"></span>
@@ -569,12 +569,11 @@ function scheduleLabel(schedule){
 }
 
 /* ---------- model computation ----------
-   Window runs from last month-end through the selected horizon
-   (mirrors the spreadsheet: EOMONTH(today,-1) → EOMONTH(today,+h)). */
+   Window runs from today through the selected horizon (today → EOMONTH(+h)). */
 function computeModel(){
   const t = today0();
   const h = Number(state.settings.horizon);
-  const winStart = eomonth(t, -1);
+  const winStart = t;
   const winEnd = eomonth(t, h);
   const months = h + 1; // month boundaries covered by the window
 
