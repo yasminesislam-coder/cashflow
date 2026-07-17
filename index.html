@@ -685,7 +685,9 @@ const store = {
   ok: false,
   init(){ try { localStorage.setItem('__cf_t', '1'); localStorage.removeItem('__cf_t'); this.ok = true; } catch (e){ this.ok = false; } },
   save(){ if (!this.ok) return false; try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; } catch (e){ return false; } },
-  load(){ if (!this.ok) return null; try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (e){ return null; } }
+  load(){ if (!this.ok) return null; try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (e){ return null; } },
+  saveMeta(ts){ if (!this.ok) return; try { localStorage.setItem(STORE_KEY + '.ts', String(ts)); } catch (e){} },
+  loadMeta(){ if (!this.ok) return 0; try { return Number(localStorage.getItem(STORE_KEY + '.ts')) || 0; } catch (e){ return 0; } }
 };
 let chipTimer = null;
 function setChip(msg, sticky){
@@ -698,6 +700,7 @@ function setChip(msg, sticky){
 function markDirty(){
   if (store.save()){
     dirty = false;
+    store.saveMeta(Date.now()); // local edit clock — lets startup pick the newer copy
     setChip('Saved on this device ✓');
   } else {
     dirty = true;
@@ -1413,13 +1416,13 @@ function setupUI(){
   else if (window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches) applyTheme('dark');
   $('#themeBtn').addEventListener('click', () => {
     const cur = document.documentElement.getAttribute('data-theme') === 'dark' ? 'light' : 'dark';
-    state.settings.theme = cur; applyTheme(cur); store.save();
+    state.settings.theme = cur; applyTheme(cur); markDirty();
   });
   // banner
   $('#startFreshBtn').addEventListener('click', () => { state = blankState(); markDirty(); renderAll(); toast('Clean slate — start with your cash balance, then add income and bills.'); });
-  $('#dismissBannerBtn').addEventListener('click', () => { state.settings.bannerDismissed = true; store.save(); renderAll(); });
+  $('#dismissBannerBtn').addEventListener('click', () => { state.settings.bannerDismissed = true; markDirty(); renderAll(); });
   // controls
-  $('#horizonSel').addEventListener('change', e => { state.settings.horizon = Number(e.target.value); store.save(); renderAll(); });
+  $('#horizonSel').addEventListener('change', e => { state.settings.horizon = Number(e.target.value); markDirty(); renderAll(); });
   $('#savingsInput').addEventListener('change', e => { state.settings.savingsPerMonth = Math.max(0, parseFloat(e.target.value) || 0); markDirty(); renderAll(); });
   // add buttons
   document.querySelectorAll('[data-add]').forEach(b => b.addEventListener('click', () => openModal(b.dataset.add === 'income' ? 'income' : b.dataset.add, null)));
@@ -1436,7 +1439,7 @@ function setupUI(){
   $('#importBtn').addEventListener('click', pickImport);
   $('#importBtn2').addEventListener('click', pickImport);
   $('#importFile').addEventListener('change', e => { if (e.target.files[0]) importData(e.target.files[0]); e.target.value = ''; });
-  $('#loadDemoBtn').addEventListener('click', () => { state = demoState(); state.settings.bannerDismissed = true; store.save(); renderAll(); toast('Demo data loaded'); });
+  $('#loadDemoBtn').addEventListener('click', () => { state = demoState(); state.settings.bannerDismissed = true; markDirty(); renderAll(); toast('Demo data loaded'); });
   $('#clearAllBtn').addEventListener('click', () => { state = blankState(); markDirty(); renderAll(); toast('Everything cleared'); });
   // csv
   const dz = $('#dropzone'), csvFile = $('#csvFile');
@@ -1503,6 +1506,7 @@ function cloudConfigured(){
 
 let fb = null;              // { auth, db, user }
 let pushTimer2 = null;
+let pushQueued = false;     // a debounced push is waiting
 let pendingPush = false;
 let lastRev = null;         // rev of the last state we wrote or adopted (echo guard)
 let unsubSnap = null;
@@ -1511,25 +1515,36 @@ function cloudPushImpl(){
   if (!fb || !fb.user) return;
   setChip('Saving to your account…', true);
   clearTimeout(pushTimer2);
-  pushTimer2 = setTimeout(doCloudPush, 700);
+  pushQueued = true;
+  pushTimer2 = setTimeout(doCloudPush, 400);
 }
 async function doCloudPush(){
   if (!fb || !fb.user) return;
+  clearTimeout(pushTimer2);
+  pushQueued = false;
   const rev = uid();
+  const ts = Date.now();
   try {
     await fb.db.collection('users').doc(fb.user.uid).set({
       state: JSON.stringify(state),
       rev,
-      updatedAt: Date.now(),
+      updatedAt: ts,
       email: fb.user.email || ''
     });
     lastRev = rev;
     pendingPush = false;
+    store.saveMeta(ts); // local and account clocks now agree
     setChip('Saved to your account ✓');
   } catch (e){
     pendingPush = true;
     setChip('Offline — saved on this device, will sync', true);
   }
+}
+function flushPush(){
+  // the app is closing or being backgrounded — don't wait out the debounce.
+  // With Firestore's offline persistence the write is queued durably even if
+  // the network round-trip doesn't finish before teardown.
+  if (pushQueued || pendingPush) doCloudPush();
 }
 
 function adoptRemote(snapData){
@@ -1541,6 +1556,7 @@ function adoptRemote(snapData){
     state.settings = Object.assign(blankState().settings, obj.settings || {});
     lastRev = snapData.rev || null;
     store.save();
+    store.saveMeta(snapData.updatedAt || Date.now());
     return true;
   } catch (e){ return false; }
 }
@@ -1554,9 +1570,14 @@ async function onSignedIn(user){
   try {
     const snap = await ref.get();
     const data = snap && (typeof snap.exists === 'function' ? snap.exists() : snap.exists) ? snap.data() : null;
-    if (data && data.state){
+    const localTs = store.loadMeta();
+    if (data && data.state && (data.updatedAt || 0) >= localTs){
       if (adoptRemote(data)) renderAll();
       setChip('Loaded from your account ✓');
+    } else if (data && data.state){
+      // this device has edits newer than the account copy (e.g. the app was
+      // closed before the last push finished) — local wins, upload it
+      await doCloudPush();
     } else {
       await doCloudPush(); // first sign-in anywhere: seed the account with this device's data
     }
@@ -1650,6 +1671,9 @@ function setupCloud(){
   try { fb.db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e){}
   cloudPush = cloudPushImpl;
   window.addEventListener('online', () => { if (pendingPush) doCloudPush(); });
+  window.addEventListener('pagehide', flushPush);
+  window.addEventListener('beforeunload', flushPush);
+  document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') flushPush(); });
   note.textContent = 'Account login is on: your data is saved to your account every time it changes, and follows you to any device you sign in on. Export files are still a fine extra backup.';
   $('#loginGate').style.display = 'flex'; // gate until we know who this is
   setupGate();
