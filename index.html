@@ -581,9 +581,12 @@ function computeModel(){
   const cardName = id => { const c = state.cards.find(c => c.id === id); return c ? c.name : null; };
 
   for (const inc of state.incomes){
-    const stop = inc.endDate ? s2d(inc.endDate) : null; // optional last day this income arrives
+    const from = inc.startDate ? s2d(inc.startDate) : null; // optional first day this income arrives
+    const stop = inc.endDate ? s2d(inc.endDate) : null;     // optional last day this income arrives
+    const effStart = (from && from > winStart) ? from : winStart;
     const effEnd = (stop && stop < winEnd) ? stop : winEnd;
-    for (const d of expandSchedule(inc.schedule, winStart, effEnd))
+    if (effStart > effEnd) continue;
+    for (const d of expandSchedule(inc.schedule, effStart, effEnd))
       events.push({ date: d, name: inc.name, amount: +inc.amount, kind: 'income' });
   }
 
@@ -948,6 +951,7 @@ function renderPlan(m){
     it.appendChild(itemRow(inc, 'income', [
       el('td', null, inc.name),
       el('td', null, el('span', {class:'evlist'}, scheduleLabel(inc.schedule) +
+        (inc.startDate ? ' · from ' + fmtDate(s2d(inc.startDate), true) : '') +
         (inc.endDate ? ' · until ' + fmtDate(s2d(inc.endDate), true) : ''))),
       el('td', {class:'num amount-pos'}, money(inc.amount, true))]));
   if (!state.incomes.length) it.appendChild(el('tr', null, el('td', {colspan:'4', class:'empty'}, 'No income yet.')));
@@ -1103,7 +1107,9 @@ function openModal(kind, id){
       body.appendChild(formRow('How often', sf.typeSel));
       body.appendChild(sf.holder);
       if (kind === 'income'){
+        f.startDate = mkInput({type:'date', value: (item && item.startDate) ? item.startDate : ''});
         f.endDate = mkInput({type:'date', value: (item && item.endDate) ? item.endDate : ''});
+        body.appendChild(formRow('Start date (optional) — first day this income arrives', f.startDate));
         body.appendChild(formRow('End date (optional) — last day this income arrives', f.endDate));
       }
     } else if (kind === 'sub'){
@@ -1144,7 +1150,12 @@ function saveModal(){
     item.amount = Math.abs(num(f.amount));
     if (kind === 'income' || kind === 'bill'){
       item.schedule = f.sched.read();
-      if (kind === 'income') item.endDate = f.endDate.value || null;
+      if (kind === 'income'){
+        item.startDate = f.startDate.value || null;
+        item.endDate = f.endDate.value || null;
+        if (item.startDate && item.endDate && item.startDate > item.endDate)
+          [item.startDate, item.endDate] = [item.endDate, item.startDate]; // forgive swapped entry
+      }
     }
     else if (kind === 'sub'){ item.day = f.day.value === 'last' ? 'last' : Number(f.day.value); item.source = f.source.value; }
     else if (kind === 'annual'){ item.month = Number(f.month.value); item.day = Math.min(31, Math.max(1, Number(f.aday.value) || 1)); item.source = f.source.value; }
