@@ -13,6 +13,9 @@
 <link rel="manifest" href="manifest.webmanifest">
 <link rel="apple-touch-icon" href="icon-180.png">
 <link rel="icon" type="image/png" sizes="192x192" href="icon-192.png">
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-app-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-auth-compat.js"></script>
+<script src="https://www.gstatic.com/firebasejs/10.14.1/firebase-firestore-compat.js"></script>
 <style>
 :root{
   color-scheme: light;
@@ -163,6 +166,19 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
 .autom-step h4{font-size:13.5px; margin-bottom:2px;}
 .autom-step p{font-size:13px; color:var(--ink-2);}
 .toast{position:fixed; bottom:24px; left:50%; transform:translateX(-50%); background:var(--ink); color:var(--page); border-radius:999px; padding:9px 18px; font-size:13.5px; z-index:30; opacity:0; transition:opacity .25s; pointer-events:none;}
+
+/* login gate */
+.gate{position:fixed; inset:0; background:var(--page); z-index:40; display:flex; align-items:center; justify-content:center; padding:20px;}
+.gatecard{background:var(--surface); border:1px solid var(--hairline); border-radius:16px; padding:26px; max-width:380px; width:100%; box-shadow:0 8px 30px rgba(0,0,0,.08);}
+.gatecard .brand{margin-bottom:14px;}
+.gatecard h3{font-size:17px; margin-bottom:4px;}
+.gatenote{font-size:13px; color:var(--muted); margin-bottom:14px;}
+.gateerr{font-size:13px; min-height:18px; margin-bottom:8px; color:var(--critical);}
+.gatelinks{display:flex; justify-content:space-between; margin-top:14px; gap:8px; flex-wrap:wrap;}
+.gatelinks button{color:var(--series); font-size:13px; padding:2px 0;}
+.gatelinks button:hover{text-decoration:underline;}
+.acct{display:flex; align-items:center; gap:8px;}
+.acct .email{font-size:12.5px; color:var(--muted); max-width:180px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;}
 .toast.show{opacity:1;}
 @media (max-width:640px){
   .tile .value{font-size:22px;} .tile.hero .value{font-size:28px;}
@@ -186,6 +202,10 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
     </div>
     <div class="spacer"></div>
     <span class="dirty-chip" id="dirtyChip"></span>
+    <div class="acct" id="acctBox" style="display:none">
+      <span class="email" id="acctEmail"></span>
+      <button class="iconbtn" id="signOutBtn">Sign out</button>
+    </div>
     <button class="iconbtn" id="themeBtn" title="Toggle light / dark">◐</button>
     <button class="iconbtn" id="exportBtn">Export data</button>
     <button class="iconbtn" id="importBtn">Load data</button>
@@ -338,6 +358,7 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
     <div class="card">
       <h2>Your data</h2>
       <div class="cardsub" id="storageNote">Export a file to back up your numbers, and load it back anytime.</div>
+      <div class="cardsub" id="cloudNote"></div>
       <div style="display:flex; gap:10px; flex-wrap:wrap;">
         <button class="iconbtn primary" id="exportBtn2">Export data file</button>
         <button class="iconbtn" id="importBtn2">Load data file</button>
@@ -362,7 +383,41 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
 </div>
 
 <div class="toast" id="toast"></div>
+
+<!-- login gate (only shown when cloud login is configured) -->
+<div class="gate" id="loginGate" style="display:none">
+  <div class="gatecard">
+    <div class="brand"><h1 style="font-size:22px; font-weight:700">Cashflow</h1></div>
+    <h3 id="gateTitle">Sign in</h3>
+    <p class="gatenote" id="gateNote">Your numbers are saved to your private account every time they change, and follow you to any device you sign in on.</p>
+    <div class="formrow"><label>Email</label><input id="gateEmail" type="email" autocomplete="email" style="width:100%"></div>
+    <div class="formrow" id="gatePassRow"><label>Password</label><input id="gatePass" type="password" autocomplete="current-password" style="width:100%"></div>
+    <div class="gateerr" id="gateErr"></div>
+    <button class="iconbtn primary" id="gateBtn" style="width:100%; padding:10px">Sign in</button>
+    <div class="gatelinks">
+      <button id="gateToggle">New here? Create an account</button>
+      <button id="gateForgot">Forgot password?</button>
+    </div>
+  </div>
+</div>
 <script>
+'use strict';
+/* =====================================================================
+   CLOUD LOGIN CONFIG
+   To turn on account login + cloud sync, replace the block below with
+   the firebaseConfig from your own Firebase project (see README).
+   Search for: PASTE_YOUR_FIREBASE_CONFIG_HERE
+   With the placeholder left as-is, the app runs in device-only mode.
+   ===================================================================== */
+const FIREBASE_CONFIG = {
+  apiKey: "PASTE_YOUR_FIREBASE_CONFIG_HERE",
+  authDomain: "",
+  projectId: "",
+  storageBucket: "",
+  messagingSenderId: "",
+  appId: ""
+};
+let cloudPush = null; // set when cloud sync is active; called on every data change
 'use strict';
 /* ============================================================
    Cashflow — single-file cash flow planner
@@ -630,20 +685,22 @@ const store = {
   load(){ if (!this.ok) return null; try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (e){ return null; } }
 };
 let chipTimer = null;
+function setChip(msg, sticky){
+  const chip = $('#dirtyChip');
+  chip.textContent = msg;
+  chip.classList.add('show');
+  clearTimeout(chipTimer);
+  if (!sticky) chipTimer = setTimeout(() => chip.classList.remove('show'), 2000);
+}
 function markDirty(){
   if (store.save()){
     dirty = false;
-    const chip = $('#dirtyChip');
-    chip.textContent = 'Saved on this device ✓';
-    chip.classList.add('show');
-    clearTimeout(chipTimer);
-    chipTimer = setTimeout(() => chip.classList.remove('show'), 1800);
+    setChip('Saved on this device ✓');
   } else {
     dirty = true;
-    const chip = $('#dirtyChip');
-    chip.textContent = 'Unsaved changes — export to keep them';
-    chip.classList.add('show');
+    setChip('Unsaved changes — export to keep them', true);
   }
+  if (cloudPush) cloudPush(); // cloud sync layer, when signed in
 }
 function clearDirty(){ dirty = false; if (!store.ok) $('#dirtyChip').classList.remove('show'); }
 
@@ -1387,28 +1444,210 @@ function setupUI(){
   setupChartHover();
 }
 
+/* ---------- boot helpers (bootApp() at the end of the cloud layer runs these) ---------- */
+function initLocalState(){
+  store.init();
+  const savedState = store.load();
+  if (savedState && Array.isArray(savedState.incomes)){
+    state = Object.assign(blankState(), savedState);
+    state.settings = Object.assign(blankState().settings, savedState.settings || {});
+  } else {
+    state = demoState();
+    store.save();
+  }
+  // storage-aware copy
+  if (store.ok){
+    $('#storageNote').textContent = 'Your numbers autosave to this device and this browser — private to whoever uses it. Export a backup file to keep a copy or to move your data to another device (export here, load it there).';
+    $('#bannerStorageNote').textContent = 'your numbers save automatically, privately, on this device';
+  } else {
+    $('#storageNote').textContent = 'This environment doesn’t allow on-device storage, so your numbers live in the page while it’s open. Export a file to keep them, and load it back next time. (Opened as an app on your Mac or iPhone, everything autosaves.)';
+    $('#bannerStorageNote').textContent = 'your numbers stay in this page until you export them';
+  }
+}
+function registerSW(){
+  // offline support when hosted (no-op when opened as a local file)
+  if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)){
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+}
+/* ============================================================
+   Cloud login & sync layer (Firebase Auth + Firestore)
+   Active only when FIREBASE_CONFIG is filled in AND the SDK
+   loaded. Otherwise the app runs exactly as a device-only app.
+   Data path: users/{uid} — each account can only read/write its
+   own document (enforced server-side by Firestore rules).
+   ============================================================ */
+function cloudConfig(){
+  return (typeof window !== 'undefined' && window.FIREBASE_CONFIG_OVERRIDE) || FIREBASE_CONFIG;
+}
+function cloudConfigured(){
+  const c = cloudConfig();
+  return !!(c && c.apiKey && c.projectId && !String(c.apiKey).startsWith('PASTE'));
+}
+
+let fb = null;              // { auth, db, user }
+let pushTimer2 = null;
+let pendingPush = false;
+let lastRev = null;         // rev of the last state we wrote or adopted (echo guard)
+let unsubSnap = null;
+
+function cloudPushImpl(){
+  if (!fb || !fb.user) return;
+  setChip('Saving to your account…', true);
+  clearTimeout(pushTimer2);
+  pushTimer2 = setTimeout(doCloudPush, 700);
+}
+async function doCloudPush(){
+  if (!fb || !fb.user) return;
+  const rev = uid();
+  try {
+    await fb.db.collection('users').doc(fb.user.uid).set({
+      state: JSON.stringify(state),
+      rev,
+      updatedAt: Date.now(),
+      email: fb.user.email || ''
+    });
+    lastRev = rev;
+    pendingPush = false;
+    setChip('Saved to your account ✓');
+  } catch (e){
+    pendingPush = true;
+    setChip('Offline — saved on this device, will sync', true);
+  }
+}
+
+function adoptRemote(snapData){
+  try {
+    if (!snapData || !snapData.state) return false;
+    const obj = JSON.parse(snapData.state);
+    if (!obj || !Array.isArray(obj.incomes)) return false;
+    state = Object.assign(blankState(), obj);
+    state.settings = Object.assign(blankState().settings, obj.settings || {});
+    lastRev = snapData.rev || null;
+    store.save();
+    return true;
+  } catch (e){ return false; }
+}
+
+async function onSignedIn(user){
+  fb.user = user;
+  $('#loginGate').style.display = 'none';
+  $('#acctBox').style.display = 'flex';
+  $('#acctEmail').textContent = user.email || '';
+  const ref = fb.db.collection('users').doc(user.uid);
+  try {
+    const snap = await ref.get();
+    const data = snap && (typeof snap.exists === 'function' ? snap.exists() : snap.exists) ? snap.data() : null;
+    if (data && data.state){
+      if (adoptRemote(data)) renderAll();
+      setChip('Loaded from your account ✓');
+    } else {
+      await doCloudPush(); // first sign-in anywhere: seed the account with this device's data
+    }
+  } catch (e){
+    pendingPush = true;
+    setChip('Offline — using this device’s saved copy', true);
+  }
+  if (unsubSnap) unsubSnap();
+  unsubSnap = ref.onSnapshot(s => {
+    const d = s && s.data ? s.data() : null;
+    if (d && d.rev && d.rev !== lastRev && d.state){
+      if (adoptRemote(d)){ renderAll(); toast('Updated from your other device'); }
+    }
+  }, () => {});
+}
+
+function onSignedOut(){
+  if (fb) fb.user = null;
+  if (unsubSnap){ unsubSnap(); unsubSnap = null; }
+  $('#acctBox').style.display = 'none';
+  $('#loginGate').style.display = 'flex';
+}
+
+function friendlyAuthError(e){
+  const code = (e && e.code) || '';
+  const map = {
+    'auth/invalid-email': 'That doesn’t look like a valid email address.',
+    'auth/user-not-found': 'No account with that email — tap "Create an account" below.',
+    'auth/wrong-password': 'Wrong password. Try again, or use "Forgot password?".',
+    'auth/invalid-credential': 'Email or password didn’t match. Try again, or use "Forgot password?".',
+    'auth/invalid-login-credentials': 'Email or password didn’t match. Try again, or use "Forgot password?".',
+    'auth/email-already-in-use': 'That email already has an account — sign in instead.',
+    'auth/weak-password': 'Password needs to be at least 6 characters.',
+    'auth/too-many-requests': 'Too many attempts — wait a minute and try again.',
+    'auth/network-request-failed': 'No connection. Check your internet and try again.'
+  };
+  return map[code] || 'Something went wrong. Please try again.';
+}
+
+let gateMode = 'signin';
+function setupGate(){
+  const title = $('#gateTitle'), btn = $('#gateBtn'), err = $('#gateErr'), note = $('#gateNote');
+  function setMode(m){
+    gateMode = m; err.textContent = ''; err.style.color = 'var(--critical)';
+    title.textContent = m === 'signin' ? 'Sign in' : (m === 'signup' ? 'Create your account' : 'Reset your password');
+    btn.textContent   = m === 'signin' ? 'Sign in' : (m === 'signup' ? 'Create account' : 'Email me a reset link');
+    note.textContent  = m === 'signup'
+      ? 'One account, all your devices. Your numbers are saved to it automatically every time they change.'
+      : (m === 'reset' ? 'Enter your email and we’ll send a link to set a new password.'
+                       : 'Your numbers are saved to your private account every time they change, and follow you to any device you sign in on.');
+    $('#gatePassRow').style.display = m === 'reset' ? 'none' : 'block';
+    $('#gateToggle').textContent = m === 'signin' ? 'New here? Create an account' : 'Have an account? Sign in';
+    $('#gatePass').setAttribute('autocomplete', m === 'signup' ? 'new-password' : 'current-password');
+  }
+  $('#gateToggle').addEventListener('click', () => setMode(gateMode === 'signin' ? 'signup' : 'signin'));
+  $('#gateForgot').addEventListener('click', () => setMode('reset'));
+  async function submit(){
+    const em = $('#gateEmail').value.trim(), pw = $('#gatePass').value;
+    err.style.color = 'var(--critical)'; err.textContent = '';
+    btn.disabled = true;
+    try {
+      if (gateMode === 'signin') await fb.auth.signInWithEmailAndPassword(em, pw);
+      else if (gateMode === 'signup') await fb.auth.createUserWithEmailAndPassword(em, pw);
+      else {
+        await fb.auth.sendPasswordResetEmail(em);
+        err.style.color = 'var(--good-text)';
+        err.textContent = 'Reset email sent — check your inbox, then sign in.';
+        setTimeout(() => setMode('signin'), 1500);
+      }
+    } catch (e){ err.textContent = friendlyAuthError(e); }
+    btn.disabled = false;
+  }
+  btn.addEventListener('click', submit);
+  for (const id of ['#gateEmail', '#gatePass'])
+    $(id).addEventListener('keydown', e => { if (e.key === 'Enter') submit(); });
+  setMode('signin');
+}
+
+function setupCloud(){
+  const note = $('#cloudNote');
+  if (!cloudConfigured()){
+    note.textContent = 'Account login: off in this copy. Data stays on each device.';
+    return;
+  }
+  if (!window.firebase || !firebase.auth){
+    note.textContent = 'Account login is set up but couldn’t start (no connection?). Working from this device’s saved copy — your changes will be here, and you can sync next time it loads.';
+    return;
+  }
+  firebase.initializeApp(cloudConfig());
+  fb = { auth: firebase.auth(), db: firebase.firestore(), user: null };
+  try { fb.db.enablePersistence({ synchronizeTabs: true }).catch(() => {}); } catch (e){}
+  cloudPush = cloudPushImpl;
+  window.addEventListener('online', () => { if (pendingPush) doCloudPush(); });
+  note.textContent = 'Account login is on: your data is saved to your account every time it changes, and follows you to any device you sign in on. Export files are still a fine extra backup.';
+  $('#loginGate').style.display = 'flex'; // gate until we know who this is
+  setupGate();
+  $('#signOutBtn').addEventListener('click', () => fb.auth.signOut());
+  fb.auth.onAuthStateChanged(u => { if (u) onSignedIn(u); else onSignedOut(); });
+}
+
 /* ---------- boot ---------- */
-store.init();
-const savedState = store.load();
-if (savedState && Array.isArray(savedState.incomes)){
-  state = Object.assign(blankState(), savedState);
-  state.settings = Object.assign(blankState().settings, savedState.settings || {});
-} else {
-  state = demoState();
-  store.save();
+function bootApp(){
+  initLocalState();
+  registerSW();
+  setupUI();
+  setupCloud();
+  renderAll();
 }
-// storage-aware copy
-if (store.ok){
-  $('#storageNote').textContent = 'Your numbers autosave to this device and this browser — private to whoever uses it. Export a backup file to keep a copy or to move your data to another device (export here, load it there).';
-  $('#bannerStorageNote').textContent = 'your numbers save automatically, privately, on this device';
-} else {
-  $('#storageNote').textContent = 'This environment doesn’t allow on-device storage, so your numbers live in the page while it’s open. Export a file to keep them, and load it back next time. (Opened as an app on your Mac or iPhone, everything autosaves.)';
-  $('#bannerStorageNote').textContent = 'your numbers stay in this page until you export them';
-}
-// offline support when hosted (no-op when opened as a local file)
-if ('serviceWorker' in navigator && /^https?:/.test(location.protocol)){
-  navigator.serviceWorker.register('sw.js').catch(() => {});
-}
-setupUI();
-renderAll();
+bootApp();
 </script></body></html>

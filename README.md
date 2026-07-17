@@ -37,6 +37,34 @@ Apple only allows home-screen web apps that live at an `https://` address. Any s
 
 The same hosted link also works on your Mac: open it in Safari → File → Add to Dock.
 
+## Account login & cloud sync (optional but recommended)
+
+Out of the box the app is device-only. To add a login so your data is always saved to an account and identical on every device, you create a free Firebase project (Google's app platform — you own it, and the free tier is far more than this app will ever use), then paste its config into `index.html`.
+
+1. Go to console.firebase.google.com, sign in with a Google account, click "Create a project". Name it `cashflow`, turn OFF Google Analytics, create.
+2. In the left menu: Build → Authentication → Get started → "Email/Password" → Enable → Save.
+3. Build → Firestore Database → Create database → Start in **production mode** → pick the default location → Enable.
+4. In Firestore, open the **Rules** tab, replace everything with the block below, click Publish:
+
+```
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+  }
+}
+```
+
+   (This is the server-side lock: every account can only ever read and write its own data.)
+5. Click the gear next to "Project Overview" → Project settings → scroll to "Your apps" → click the `</>` (Web) icon → nickname `cashflow` → Register (don't tick Firebase Hosting). Copy the `firebaseConfig = { ... }` block it shows.
+6. Open `index.html` in a text editor, find `PASTE_YOUR_FIREBASE_CONFIG_HERE` near the top of the script, and replace the whole `FIREBASE_CONFIG = { ... }` object's contents with the values you copied (apiKey, authDomain, projectId, storageBucket, messagingSenderId, appId). Or paste the config to Claude and get the edited file back.
+7. Authentication → Settings → Authorized domains: make sure your hosting domain is listed (e.g. `YOURUSERNAME.github.io`) — add it if not. `localhost` is pre-authorized.
+8. Re-upload `index.html` to your host. The app now opens with a sign-in screen. Create your account once, sign in on each device, and your data is saved to the account on every change — surviving cleared browsers, new phones, everything. Deleting the app or clearing the browser can no longer lose your numbers.
+
+Notes: the pasted config is not a secret (it only identifies your project; the Rules are the security). Anyone else using your hosted app creates their own account and their data lands in your Firebase project, readable by no one but them — except that you, as the project owner, could technically inspect it in the Firebase console. For personal/family use that's normally fine; for wider distribution, each household should host its own copy with its own project.
+
 ## Moving data between devices
 
 There is deliberately no cloud sync. To move your numbers: Export data on device A (produces a small `.json` file), get the file to device B (AirDrop works well), then Load data on device B. Treat exported files like bank statements — they contain your numbers.
