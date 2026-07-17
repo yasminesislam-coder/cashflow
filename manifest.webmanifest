@@ -1,0 +1,14 @@
+{
+  "name": "Cashflow",
+  "short_name": "Cashflow",
+  "description": "Personal cash flow planner — know your balance before it happens. All data stays on your device.",
+  "start_url": "./index.html",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#f9f9f7",
+  "theme_color": "#f9f9f7",
+  "icons": [
+    { "src": "icon-192.png", "sizes": "192x192", "type": "image/png", "purpose": "any" },
+    { "src": "icon-512.png", "sizes": "512x512", "type": "image/png", "purpose": "any maskable" }
+  ]
+}
