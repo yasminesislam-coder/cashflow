@@ -124,6 +124,7 @@ th{font-size:12px; text-transform:uppercase; letter-spacing:.4px; color:var(--mu
 td{padding:8px; border-bottom:1px solid var(--grid); vertical-align:middle;}
 tr:last-child td{border-bottom:none;}
 td.num, th.num{text-align:right; font-variant-numeric:tabular-nums;}
+td.ctr, th.ctr{text-align:center;}
 td .evlist{color:var(--muted); font-size:12.5px;}
 tr.today-row td{background:var(--series-soft);}
 td.neg{color:var(--critical); font-weight:600;}
@@ -303,7 +304,7 @@ pre.jsonbox{background:var(--surface-2); border:1px solid var(--hairline); borde
       <div class="cardsub">Track what you owe and what's due. When "plan statement payment" is on, a payment for the statement balance is added to your cash timeline on the due day each month — no need to enter card payments by hand.</div>
       <div style="overflow-x:auto">
         <table id="cardsTable"><thead><tr>
-          <th>Card</th><th class="num">Current balance</th><th class="num">Statement balance</th><th>Payment due</th><th>Plan payment</th><th></th>
+          <th>Card</th><th class="num">Current balance</th><th class="num">Statement balance</th><th class="ctr">Payment due</th><th class="ctr">Plan payment</th><th></th>
         </tr></thead><tbody></tbody></table>
       </div>
       <button class="addbtn" data-add="card">+ Add card</button>
@@ -992,8 +993,8 @@ function renderCards(m){
       el('td', null, c.name),
       el('td', {class:'num'}, money(c.currentBalance, true)),
       el('td', {class:'num'}, money(c.statementBalance, true)),
-      el('td', null, 'the ' + ordinal(c.dueDay)),
-      el('td', null, chk),
+      el('td', {class:'ctr'}, 'the ' + ordinal(c.dueDay)),
+      el('td', {class:'ctr'}, chk),
       el('td', {class:'rowactions'}, el('button', {onclick: () => openModal('card', c.id)}, 'Edit'))));
   }
   if (!state.cards.length) ct.appendChild(el('tr', null, el('td', {colspan:'6', class:'empty'}, 'No cards yet.')));
