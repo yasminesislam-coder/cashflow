@@ -959,8 +959,9 @@ function renderPlan(m){
 /* ---------- cards & subs ---------- */
 function sourceLabel(src){
   if (src === 'cash') return 'Cash';
+  if (src === 'card-other') return 'Credit card';
   const c = state.cards.find(c => c.id === src);
-  return c ? c.name : 'Cash';
+  return c ? c.name : 'Credit card';
 }
 function renderCards(m){
   const ct = $('#cardsTable tbody'); clear(ct);
@@ -1013,7 +1014,11 @@ const dayOptions = () => {
   o.push(['last', 'Last day of month']); return o;
 };
 const monthOptions = () => MONTHS.map((m, i) => [i + 1, m]);
-const sourceOptions = () => [['cash', 'Cash (checking)']].concat(state.cards.map(c => [c.id, c.name + ' card']));
+const sourceOptions = () => {
+  const opts = [['cash', 'Cash (checking)']].concat(state.cards.map(c => [c.id, c.name + ' card']));
+  opts.push(['card-other', state.cards.length ? 'Other credit card' : 'Credit card']);
+  return opts;
+};
 
 function scheduleFields(schedule){
   const sch = schedule || { type: 'monthly', day: 1 };
@@ -1138,11 +1143,11 @@ function deleteModalItem(){
   const list = lists[modalCtx.kind];
   const i = list.findIndex(x => x.id === modalCtx.id);
   if (i >= 0){
-    // a deleted card: repoint its subscriptions to cash
+    // a deleted card: its subscriptions stay card-billed, just untracked
     if (modalCtx.kind === 'card'){
       const cid = list[i].id;
-      for (const s of state.subs) if (s.source === cid) s.source = 'cash';
-      for (const a of state.annuals) if (a.source === cid) a.source = 'cash';
+      for (const s of state.subs) if (s.source === cid) s.source = 'card-other';
+      for (const a of state.annuals) if (a.source === cid) a.source = 'card-other';
     }
     list.splice(i, 1);
   }
