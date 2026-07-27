@@ -10,6 +10,7 @@ Private by design: no accounts, no server, no sync. All data is stored on the de
 |---|---|
 | `index.html` | The entire app. Works on its own. |
 | `manifest.webmanifest`, `sw.js`, `icon-*.png` | Only used when the app is hosted at a web address. They make it installable (home-screen / dock icon) and let it work offline. |
+| `firestore.rules` | The security rules for the optional cloud-sync mode. Only needed if you deploy rules with the Firebase CLI; if you paste them into the Firebase console (see below) you can ignore this file. |
 
 All files live at the top level on purpose — upload everything in one drag and it just works.
 
@@ -44,7 +45,7 @@ Out of the box the app is device-only. To add a login so your data is always sav
 1. Go to console.firebase.google.com, sign in with a Google account, click "Create a project". Name it `cashflow`, turn OFF Google Analytics, create.
 2. In the left menu: Build → Authentication → Get started → "Email/Password" → Enable → Save.
 3. Build → Firestore Database → Create database → Start in **production mode** → pick the default location → Enable.
-4. In Firestore, open the **Rules** tab, replace everything with the block below, click Publish:
+4. In Firestore, open the **Rules** tab, replace everything with the block below (it's the same as the included `firestore.rules` file), click Publish:
 
 ```
 rules_version = '2';
@@ -64,6 +65,13 @@ service cloud.firestore {
 8. Re-upload `index.html` to your host. The app now opens with a sign-in screen. Create your account once, sign in on each device, and your data is saved to the account on every change — surviving cleared browsers, new phones, everything. Deleting the app or clearing the browser can no longer lose your numbers.
 
 Notes: the pasted config is not a secret (it only identifies your project; the Rules are the security). Anyone else using your hosted app creates their own account and their data lands in your Firebase project, readable by no one but them — except that you, as the project owner, could technically inspect it in the Firebase console. For personal/family use that's normally fine; for wider distribution, each household should host its own copy with its own project.
+
+### What signing out does, and what a new account starts with
+
+Cloud sync keeps a copy of your numbers on each device so the app is fast and works offline. Two rules keep that copy from ever showing up under the wrong account:
+
+- **Signing out clears this device's local copy.** Nobody who uses the device next can see your numbers. Sign back in while you have a connection and everything reloads from your account. (If you have unsynced offline edits, sign out only after you're back online so they save first.)
+- **A new account never inherits another account's data.** Creating an account on a device that someone else was already using starts empty, not with their numbers. Numbers you entered on a device *without ever signing in* are still adopted by the first account you create there, so a setup you did anonymously isn't lost.
 
 ## Moving data between devices
 

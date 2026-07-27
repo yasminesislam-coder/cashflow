@@ -1,0 +1,14 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    // Each account can read and write ONLY its own document at users/{uid}.
+    // This is the server-side backstop: even a modified or malicious client
+    // cannot reach another account's data.
+    match /users/{uid} {
+      allow read, write: if request.auth != null && request.auth.uid == uid;
+    }
+
+    // Everything else is denied by default (no rule = no access).
+  }
+}
