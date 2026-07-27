@@ -711,7 +711,13 @@ const store = {
   save(){ if (!this.ok) return false; try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); return true; } catch (e){ return false; } },
   load(){ if (!this.ok) return null; try { const s = localStorage.getItem(STORE_KEY); return s ? JSON.parse(s) : null; } catch (e){ return null; } },
   saveMeta(ts){ if (!this.ok) return; try { localStorage.setItem(STORE_KEY + '.ts', String(ts)); } catch (e){} },
-  loadMeta(){ if (!this.ok) return 0; try { return Number(localStorage.getItem(STORE_KEY + '.ts')) || 0; } catch (e){ return 0; } }
+  loadMeta(){ if (!this.ok) return 0; try { return Number(localStorage.getItem(STORE_KEY + '.ts')) || 0; } catch (e){ return 0; } },
+  // Which account this device's cached copy belongs to. Lets sign-in tell "my
+  // own offline edits" apart from "data left behind by a different account",
+  // so one person's numbers can never be adopted or uploaded under another's.
+  saveOwner(u){ if (!this.ok) return; try { if (u) localStorage.setItem(STORE_KEY + '.owner', u); else localStorage.removeItem(STORE_KEY + '.owner'); } catch (e){} },
+  loadOwner(){ if (!this.ok) return null; try { return localStorage.getItem(STORE_KEY + '.owner') || null; } catch (e){ return null; } },
+  clear(){ if (!this.ok) return; try { localStorage.removeItem(STORE_KEY); localStorage.removeItem(STORE_KEY + '.ts'); localStorage.removeItem(STORE_KEY + '.owner'); } catch (e){} }
 };
 let chipTimer = null;
 function setChip(msg, sticky){
@@ -1569,6 +1575,7 @@ async function doCloudPush(){
     lastRev = rev;
     pendingPush = false;
     store.saveMeta(ts); // local and account clocks now agree
+    store.saveOwner(fb.user.uid); // this device's cached copy now belongs to this account
     setChip('Saved to your account ✓');
   } catch (e){
     pendingPush = true;
@@ -1602,29 +1609,54 @@ async function onSignedIn(user){
   $('#acctBox').style.display = 'flex';
   $('#acctEmail').textContent = user.email || '';
   const ref = fb.db.collection('users').doc(user.uid);
+  // Who does the copy cached on this device actually belong to?
+  const owner = store.loadOwner();
+  const mine = owner === user.uid;                       // this account's own cached edits
+  const otherAcct = owner != null && owner !== user.uid; // left behind by a DIFFERENT account
   try {
     const snap = await ref.get();
     const data = snap && (typeof snap.exists === 'function' ? snap.exists() : snap.exists) ? snap.data() : null;
     const localTs = store.loadMeta();
-    if (data && data.state && (data.updatedAt || 0) >= localTs){
-      if (adoptRemote(data)) renderAll();
-      setChip('Loaded from your account ✓');
-    } else if (data && data.state){
-      // this device has edits newer than the account copy (e.g. the app was
-      // closed before the last push finished) — local wins, upload it
-      await doCloudPush();
+    if (data && data.state){
+      // The account already has its own data in the cloud.
+      if (mine && (data.updatedAt || 0) < localTs){
+        // Same account, and this device has newer un-synced edits — upload them.
+        await doCloudPush();
+      } else {
+        // Adopt the account's own cloud copy. If the cache belonged to someone
+        // else, this replaces it so their numbers stop showing on this device.
+        if (adoptRemote(data)){ store.saveOwner(user.uid); renderAll(); }
+        setChip('Loaded from your account ✓');
+      }
     } else {
-      await doCloudPush(); // first sign-in anywhere: seed the account with this device's data
+      // Brand-new account: it has no data of its own yet. If the data sitting in
+      // memory/cache belongs to a DIFFERENT account, wipe it first — seeding the
+      // new account with it is the bug that leaked one person's finances into
+      // someone else's account. (Unclaimed data you just entered is kept.)
+      if (otherAcct){ state = blankState(); store.save(); }
+      store.saveOwner(user.uid);
+      await doCloudPush(); // seed the account with its own (now correct) data
     }
   } catch (e){
-    pendingPush = true;
-    setChip('Offline — using this device’s saved copy', true);
+    // Couldn't reach the cloud. Keep showing the on-device copy only if it's
+    // this account's; otherwise show nothing (never reveal another account's
+    // data) and don't queue a push that could overwrite this account's real
+    // cloud data with the wrong numbers once the connection returns.
+    if (mine){
+      pendingPush = true;
+      setChip('Offline — using your saved copy, will sync', true);
+    } else {
+      if (otherAcct){ state = blankState(); store.save(); }
+      store.saveOwner(user.uid);
+      renderAll();
+      setChip('Offline — your data will load when connected', true);
+    }
   }
   if (unsubSnap) unsubSnap();
   unsubSnap = ref.onSnapshot(s => {
     const d = s && s.data ? s.data() : null;
     if (d && d.rev && d.rev !== lastRev && d.state){
-      if (adoptRemote(d)){ renderAll(); toast('Updated from your other device'); }
+      if (adoptRemote(d)){ store.saveOwner(user.uid); renderAll(); toast('Updated from your other device'); }
     }
   }, () => {});
 }
@@ -1632,6 +1664,12 @@ async function onSignedIn(user){
 function onSignedOut(){
   if (fb) fb.user = null;
   if (unsubSnap){ unsubSnap(); unsubSnap = null; }
+  lastRev = null; pendingPush = false; pushQueued = false; clearTimeout(pushTimer2);
+  // Privacy: don't leave this account's numbers in memory or in the on-device
+  // cache for whoever signs in — or signs up — next on this device.
+  state = blankState();
+  store.clear();
+  renderAll();
   $('#acctBox').style.display = 'none';
   $('#loginGate').style.display = 'flex';
 }
